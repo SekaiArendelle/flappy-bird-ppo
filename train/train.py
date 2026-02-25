@@ -4,6 +4,7 @@ import torch.optim as optim
 import numpy as np
 import flappy_bird_gymnasium
 import gymnasium as gym
+# import normal
 from torch.distributions import Categorical
 
 
@@ -11,8 +12,8 @@ from torch.distributions import Categorical
 class Config:
     # 环境
     env_name = "FlappyBird-v0"
-    # render_mode = None  # "human" 用于可视化
-    render_mode = "human"
+    render_mode = None  # "human" 用于可视化
+    # render_mode = "human"
 
     # 网络
     hidden_dim = 256
@@ -23,7 +24,7 @@ class Config:
     gae_lambda = 0.95
     clip_epsilon = 0.2
     value_coef = 0.5
-    entropy_coef = 0.01
+    entropy_coef = 0.1
     max_grad_norm = 0.5
 
     # 训练
@@ -45,8 +46,10 @@ class ActorCritic(nn.Module):
         # 共享特征提取层
         self.shared = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
         )
 
@@ -304,6 +307,24 @@ def train():
             # 执行动作
             next_state, reward, terminated, truncated, info = env.step(action.item())
             done = terminated or truncated
+
+            if reward == 0.1 and next_state[3] != 1 and next_state[4] != 0:
+                player_y = next_state[0]
+                next_pipe_top = next_state[3]
+                next_pipe_bottom = next_state[4]
+                # gap_center = (next_pipe_top + next_pipe_bottom) / 2
+                # reward = normal.normal_pdf(player_y, gap_center, 0.4)
+                if next_pipe_bottom < player_y < next_pipe_top:
+                    reward = 0.25
+                else:
+                    reward = -0.2
+            elif reward == 0.1 and len(trainer.buffer.actions) >= 3 and \
+                  trainer.buffer.actions[-1] ==  \
+                 trainer.buffer.actions[-2] == \
+                    trainer.buffer.actions[-3] == 1:
+                reward = -0.2
+            elif reward == 0.1:
+                reward = 0.1
 
             # 存储经验
             trainer.buffer.add(state, action, reward, value.squeeze(), log_prob, done)
