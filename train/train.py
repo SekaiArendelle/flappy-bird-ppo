@@ -134,8 +134,8 @@ class RolloutBuffer:
 
     def get(self):
         return (
-            torch.stack(self.states),
-            torch.stack(self.actions),
+            torch.stack(self.states).to(Config.device),
+            torch.stack(self.actions).to(Config.device),
             torch.tensor(self.rewards, dtype=torch.float32),
             torch.tensor(self.values, dtype=torch.float32),
             torch.stack(self.log_probs),
@@ -292,7 +292,7 @@ def train():
 
     for episode in range(config.num_episodes):
         state, _ = env.reset()
-        state = torch.FloatTensor(state)
+        state = torch.FloatTensor(state).to(config.device)
 
         episode_reward = 0
         episode_length = 0
@@ -333,7 +333,7 @@ def train():
             episode_length += 1
             global_step += 1
 
-            state = torch.FloatTensor(next_state)
+            state = torch.FloatTensor(next_state).to(config.device)
 
             # 达到更新步数时执行 PPO 更新
             if len(trainer.buffer.states) >= config.steps_per_update:
