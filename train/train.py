@@ -5,105 +5,8 @@ import numpy as np
 import flappy_bird_gymnasium
 import gymnasium as gym
 # import normal
-from torch.distributions import Categorical
-
-
-# ==================== 超参数配置 ====================
-class Config:
-    # 环境
-    env_name = "FlappyBird-v0"
-    render_mode = None  # "human" 用于可视化
-    # render_mode = "human"
-
-    # 网络
-    hidden_dim = 256
-
-    # PPO
-    lr = 3e-4
-    gamma = 0.99
-    gae_lambda = 0.95
-    clip_epsilon = 0.2
-    value_coef = 0.5
-    entropy_coef = 0.1
-    max_grad_norm = 0.5
-
-    # 训练
-    num_episodes = 5000
-    steps_per_update = 2048
-    num_epochs = 10
-    batch_size = 64
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-# ==================== Actor-Critic 网络 ====================
-class ActorCritic(nn.Module):
-    """共享 backbone 的 Actor-Critic 架构"""
-
-    def __init__(self, state_dim, action_dim, hidden_dim=256):
-        super().__init__()
-
-        # 共享特征提取层
-        self.shared = nn.Sequential(
-            nn.Linear(state_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU(),
-        )
-
-        # Actor: 策略网络 (输出动作概率)
-        self.actor = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim // 2, action_dim),
-            nn.Softmax(dim=-1),
-        )
-
-        # Critic: 价值网络 (输出状态价值)
-        self.critic = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim // 2, 1),
-        )
-
-        self._init_weights()
-
-    def _init_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.orthogonal_(m.weight, gain=np.sqrt(2))
-                nn.init.constant_(m.bias, 0)
-
-    def forward(self, state):
-        features = self.shared(state)
-        action_probs = self.actor(features)
-        state_value = self.critic(features)
-        return action_probs, state_value
-
-    def get_action(self, state, deterministic=False):
-        """采样动作并返回 log_prob"""
-        action_probs, state_value = self.forward(state)
-        dist = Categorical(action_probs)
-
-        if deterministic:
-            action = torch.argmax(action_probs, dim=-1)
-        else:
-            action = dist.sample()
-
-        log_prob = dist.log_prob(action)
-        entropy = dist.entropy()
-        return action, log_prob, entropy, state_value
-
-    def evaluate(self, state, action):
-        """评估给定状态下动作的对数概率和价值"""
-        action_probs, state_value = self.forward(state)
-        dist = Categorical(action_probs)
-
-        log_prob = dist.log_prob(action)
-        entropy = dist.entropy()
-        return log_prob, entropy, state_value.squeeze(-1)
+from constant import Config
+from model import ActorCritic
 
 
 # ==================== 经验缓冲区 ====================
@@ -366,40 +269,6 @@ def train():
 
     env.close()
     return trainer.policy
-
-
-# ==================== 测试/可视化 ====================
-def test(model_path, num_episodes=5):
-    """测试训练好的模型"""
-    config = Config()
-    env = gym.make(config.env_name, render_mode="human", use_lidar=False)
-
-    state_dim = env.observation_space.shape[0]
-    action_dim = env.action_space.n
-
-    policy = ActorCritic(state_dim, action_dim, config.hidden_dim)
-    policy.load_state_dict(torch.load(model_path))
-    policy.to(config.device)
-    policy.eval()
-
-    for episode in range(num_episodes):
-        state, _ = env.reset()
-        episode_reward = 0
-
-        while True:
-            with torch.no_grad():
-                state_tensor = torch.FloatTensor(state).unsqueeze(0).to(config.device)
-                action, _, _, _ = policy.get_action(state_tensor, deterministic=True)
-
-            state, reward, terminated, truncated, _ = env.step(action.item())
-            episode_reward += reward
-
-            if terminated or truncated:
-                print(f"Test Episode {episode + 1}: Reward = {episode_reward}")
-                break
-
-    env.close()
-
 
 if __name__ == "__main__":
     # 训练
