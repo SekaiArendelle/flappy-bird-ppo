@@ -1,28 +1,23 @@
 import torch
 
 # ==================== 超参数配置 ====================
-class Config:
-    # 环境
-    env_name = "FlappyBird-v0"
-    render_mode = None  # "human" 用于可视化
-    # render_mode = "human"
 
-    # 网络
-    hidden_dim = 256
+# 网络
+HIDDEN_DIM = 256
 
-    # PPO
-    lr = 3e-4
-    gamma = 0.99
-    gae_lambda = 0.95
-    clip_epsilon = 0.2
-    value_coef = 0.5
-    entropy_coef = 0.1
-    max_grad_norm = 0.5
+# PPO
+LEARNING_RATE = 3e-4
+GAMMA = 0.99
+GAE_LAMBDA = 0.95
+CLIP_EPSILON = 0.2
+VALUE_COEF = 0.5
+ENTROPY_COEF = 0.1
+MAX_GRAD_NORM = 0.5
 
-    # 训练
-    num_episodes = 5000
-    steps_per_update = 2048
-    num_epochs = 10
-    batch_size = 64
+# 训练
+NUM_EPISODES = 5000
+STEPS_PER_UPDATE = 2048
+NUM_EPOCHS = 10
+BATCH_SIZE = 64
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

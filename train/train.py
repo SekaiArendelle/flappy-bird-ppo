@@ -5,7 +5,7 @@ import numpy as np
 import flappy_bird_gymnasium
 import gymnasium as gym
 # import normal
-from constant import Config
+import constant
 from model import ActorCritic
 
 
@@ -37,8 +37,8 @@ class RolloutBuffer:
 
     def get(self):
         return (
-            torch.stack(self.states).to(Config.device),
-            torch.stack(self.actions).to(Config.device),
+            torch.stack(self.states).to(constant.DEVICE),
+            torch.stack(self.actions).to(constant.DEVICE),
             torch.tensor(self.rewards, dtype=torch.float32),
             torch.tensor(self.values, dtype=torch.float32),
             torch.stack(self.log_probs),
@@ -69,12 +69,11 @@ def compute_gae(rewards, values, dones, gamma=0.99, lambda_=0.95, next_value=0):
 
 # ==================== PPO 训练器 ====================
 class PPOTrainer:
-    def __init__(self, state_dim, action_dim, config):
-        self.config = config
-        self.policy = ActorCritic(state_dim, action_dim, config.hidden_dim).to(
-            config.device
+    def __init__(self, state_dim, action_dim):
+        self.policy = ActorCritic(state_dim, action_dim, constant.HIDDEN_DIM).to(
+            constant.DEVICE
         )
-        self.optimizer = optim.Adam(self.policy.parameters(), lr=config.lr)
+        self.optimizer = optim.Adam(self.policy.parameters(), lr=constant.LEARNING_RATE)
         self.buffer = RolloutBuffer()
 
     def update(self, last_state=None):
@@ -82,12 +81,12 @@ class PPOTrainer:
         states, actions, rewards, old_values, old_log_probs, dones = self.buffer.get()
 
         # 转移到设备
-        states = states.to(self.config.device)
-        actions = actions.to(self.config.device)
-        rewards = rewards.to(self.config.device)
-        old_values = old_values.to(self.config.device)
-        old_log_probs = old_log_probs.to(self.config.device)
-        dones = dones.to(self.config.device)
+        states = states.to(constant.DEVICE)
+        actions = actions.to(constant.DEVICE)
+        rewards = rewards.to(constant.DEVICE)
+        old_values = old_values.to(constant.DEVICE)
+        old_log_probs = old_log_probs.to(constant.DEVICE)
+        dones = dones.to(constant.DEVICE)
 
         # 计算最后一个状态的 value 用于 GAE
         next_value = 0
@@ -101,8 +100,8 @@ class PPOTrainer:
             rewards,
             old_values,
             dones,
-            self.config.gamma,
-            self.config.gae_lambda,
+            constant.GAMMA,
+            constant.GAE_LAMBDA,
             next_value,
         )
 
@@ -113,11 +112,11 @@ class PPOTrainer:
         dataset_size = len(states)
         indices = np.arange(dataset_size)
 
-        for epoch in range(self.config.num_epochs):
+        for epoch in range(constant.NUM_EPOCHS):
             np.random.shuffle(indices)
 
-            for start in range(0, dataset_size, self.config.batch_size):
-                end = start + self.config.batch_size
+            for start in range(0, dataset_size, constant.BATCH_SIZE):
+                end = start + constant.BATCH_SIZE
                 batch_idx = indices[start:end]
 
                 batch_states = states[batch_idx]
@@ -139,8 +138,8 @@ class PPOTrainer:
                 surr2 = (
                     torch.clamp(
                         ratio,
-                        1 - self.config.clip_epsilon,
-                        1 + self.config.clip_epsilon,
+                        1 - constant.CLIP_EPSILON,
+                        1 + constant.CLIP_EPSILON,
                     )
                     * batch_advantages
                 )
@@ -155,15 +154,15 @@ class PPOTrainer:
                 # 总损失
                 loss = (
                     policy_loss
-                    + self.config.value_coef * value_loss
-                    + self.config.entropy_coef * entropy_loss
+                    + constant.VALUE_COEF * value_loss
+                    + constant.ENTROPY_COEF * entropy_loss
                 )
 
                 # 反向传播
                 self.optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(
-                    self.policy.parameters(), self.config.max_grad_norm
+                    self.policy.parameters(), constant.MAX_GRAD_NORM
                 )
                 self.optimizer.step()
 
@@ -178,24 +177,22 @@ class PPOTrainer:
 
 # ==================== 主训练循环 ====================
 def train():
-    config = Config()
-
     # 创建环境 (使用向量状态而非图像)
-    env = gym.make(config.env_name, render_mode=config.render_mode, use_lidar=False)
+    env = gym.make("FlappyBird-v0", render_mode=None, use_lidar=False)
     state_dim = env.observation_space.shape[0]  # 通常是12维向量状态
     action_dim = env.action_space.n  # 2个动作: 0=不操作, 1=跳跃
 
     print(f"State dim: {state_dim}, Action dim: {action_dim}")
-    print(f"Device: {config.device}")
+    print(f"Device: {constant.DEVICE}")
 
-    trainer = PPOTrainer(state_dim, action_dim, config)
+    trainer = PPOTrainer(state_dim, action_dim)
 
     episode_rewards = []
     global_step = 0
 
-    for episode in range(config.num_episodes):
+    for episode in range(constant.NUM_EPISODES):
         state, _ = env.reset()
-        state = torch.FloatTensor(state).to(config.device)
+        state = torch.FloatTensor(state).to(constant.DEVICE)
 
         episode_reward = 0
         episode_length = 0
@@ -236,10 +233,10 @@ def train():
             episode_length += 1
             global_step += 1
 
-            state = torch.FloatTensor(next_state).to(config.device)
+            state = torch.FloatTensor(next_state).to(constant.DEVICE)
 
             # 达到更新步数时执行 PPO 更新
-            if len(trainer.buffer.states) >= config.steps_per_update:
+            if len(trainer.buffer.states) >= constant.STEPS_PER_UPDATE:
                 # 传入 last_state 用于计算 GAE 的 bootstrap value
                 losses = trainer.update(last_state=state if not done else None)
 
