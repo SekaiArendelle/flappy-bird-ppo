@@ -15,14 +15,16 @@ VALUE_COEF: float = 0.5
 ENTROPY_COEF: float = 0.001
 MAX_GRAD_NORM: float = 0.5
 
-# 学习率调度
-LR_SCHEDULE: Optional[str] = "cosine"  # "linear", "exponential", or "cosine"
-LR_DECAY_STEPS: int = 10_000_000  # 总训练步数
+# 学习率调度 - 按预期总步数设置
+LR_SCHEDULE: Optional[str] = "cosine"
+ESTIMATED_STEPS_PER_EPISODE: int = 150
+LR_DECAY_FRACTION: float = 0.8
 MIN_LEARNING_RATE: float = 3e-5
 
 # 训练
 NUM_EPISODES: int = 5000
-STEPS_PER_UPDATE: int = 1000
+LR_DECAY_STEPS: int = int(NUM_EPISODES * ESTIMATED_STEPS_PER_EPISODE * LR_DECAY_FRACTION)
+STEPS_PER_UPDATE: int = 2048
 NUM_EPOCHS: int = 10
 BATCH_SIZE: int = 64
 
