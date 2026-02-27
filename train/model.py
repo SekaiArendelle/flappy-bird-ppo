@@ -15,10 +15,10 @@ class ActorCritic(nn.Module):
         # 共享特征提取层
         self.shared = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
+            # nn.LayerNorm(hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
+            # nn.LayerNorm(hidden_dim),
             nn.ReLU(),
         )
 

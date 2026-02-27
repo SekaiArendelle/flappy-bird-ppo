@@ -6,7 +6,7 @@ import numpy as np
 import flappy_bird_gymnasium
 import gymnasium as gym
 
-# import normal
+import normal
 import constant
 from model import ActorCritic
 from typing import List, Optional, Tuple, Dict
@@ -114,35 +114,37 @@ class PPOTrainer:
 
     def _create_scheduler(self):
         """创建学习率调度器"""
-        if constant.LR_SCHEDULE == "linear":
 
-            def lr_lambda(step):
-                progress = min(step / constant.LR_DECAY_STEPS, 1.0)
-                return max(
-                    1.0 - progress, constant.MIN_LEARNING_RATE / constant.LEARNING_RATE
-                )
+        # 定义调度策略计算函数
+        def _linear_decay(step):
+            progress = min(step / constant.LR_DECAY_STEPS, 1.0)
+            return max(
+                1.0 - progress, constant.MIN_LEARNING_RATE / constant.LEARNING_RATE
+            )
 
-        elif constant.LR_SCHEDULE == "exponential":
+        def _exponential_decay(step):
+            decay_rate = (
+                np.log(constant.MIN_LEARNING_RATE / constant.LEARNING_RATE)
+                / constant.LR_DECAY_STEPS
+            )
+            return np.exp(decay_rate * step)
 
-            def lr_lambda(step):
-                decay_rate = (
-                    np.log(constant.MIN_LEARNING_RATE / constant.LEARNING_RATE)
-                    / constant.LR_DECAY_STEPS
-                )
-                return np.exp(decay_rate * step)
+        def _cosine_decay(step):
+            progress = min(step / constant.LR_DECAY_STEPS, 1.0)
+            min_lr_ratio = constant.MIN_LEARNING_RATE / constant.LEARNING_RATE
+            return (1 + np.cos(np.pi * progress)) / 2 * (
+                1 - min_lr_ratio
+            ) + min_lr_ratio
 
-        elif constant.LR_SCHEDULE == "cosine":
+        # 策略映射表
+        schedulers = {
+            "linear": _linear_decay,
+            "exponential": _exponential_decay,
+            "cosine": _cosine_decay,
+        }
 
-            def lr_lambda(step):
-                progress = min(step / constant.LR_DECAY_STEPS, 1.0)
-                return (1 + np.cos(np.pi * progress)) / 2 * (
-                    1 - constant.MIN_LEARNING_RATE / constant.LEARNING_RATE
-                ) + constant.MIN_LEARNING_RATE / constant.LEARNING_RATE
-
-        else:
-
-            def lr_lambda(step):
-                return 1.0
+        # 获取对应策略，默认恒等函数
+        lr_lambda = schedulers.get(constant.LR_SCHEDULE, lambda step: 1.0)
 
         return LambdaLR(self.optimizer, lr_lambda)
 
@@ -285,23 +287,14 @@ def train() -> ActorCritic:
                 player_y = next_state[0]
                 next_pipe_top = next_state[3]
                 next_pipe_bottom = next_state[4]
-                # gap_center = (next_pipe_top + next_pipe_bottom) / 2
-                # reward = normal.normal_pdf(player_y, gap_center, 0.4)
-                if next_pipe_bottom < player_y < next_pipe_top:
-                    reward = 0.25
-                else:
-                    reward = -0.2
-            elif (
-                reward == 0.1
-                and len(trainer.buffer.actions) >= 3
-                and trainer.buffer.actions[-1]
-                == trainer.buffer.actions[-2]
-                == trainer.buffer.actions[-3]
-                == 1
-            ):
-                reward = -0.2
+                gap_center = (next_pipe_top + next_pipe_bottom) / 2
+                reward = normal.custom_normal(player_y, gap_center, 0.1)
             elif reward == 0.1:
-                reward = 0.1
+                player_y = next_state[0]
+                reward = normal.custom_normal(player_y, 1, 0.1)
+
+            elif reward == -0.5:
+                reward = -0.1
 
             # 存储经验
             trainer.buffer.add(state, action, reward, value.squeeze(), log_prob, done)
@@ -348,6 +341,3 @@ def train() -> ActorCritic:
 if __name__ == "__main__":
     # 训练
     policy = train()
-
-    # 测试 (取消注释以运行)
-    # test("ppo_flappy_4000.pth")
