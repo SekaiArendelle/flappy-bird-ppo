@@ -5,6 +5,7 @@ import flappy_bird_gymnasium
 import gymnasium as gym
 from model import ActorCritic
 
+
 # ==================== 测试/可视化 ====================
 def test(model_path: str, num_episodes: int = 5) -> None:
     """测试训练好的模型"""
@@ -35,6 +36,7 @@ def test(model_path: str, num_episodes: int = 5) -> None:
                 break
 
     env.close()
+
 
 if __name__ == "__main__":
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

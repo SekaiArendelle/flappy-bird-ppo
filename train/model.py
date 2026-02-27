@@ -4,6 +4,7 @@ from torch import nn
 from torch.distributions import Categorical
 from typing import Tuple
 
+
 # ==================== Actor-Critic 网络 ====================
 class ActorCritic(nn.Module):
     """共享 backbone 的 Actor-Critic 架构"""
@@ -66,7 +67,9 @@ class ActorCritic(nn.Module):
         entropy = dist.entropy()
         return action, log_prob, entropy, state_value
 
-    def evaluate(self, state: torch.Tensor, action: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def evaluate(
+        self, state: torch.Tensor, action: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """评估给定状态下动作的对数概率和价值"""
         action_probs, state_value = self.forward(state)
         dist = Categorical(action_probs)

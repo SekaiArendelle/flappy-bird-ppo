@@ -5,6 +5,7 @@ from torch.optim.lr_scheduler import LambdaLR
 import numpy as np
 import flappy_bird_gymnasium
 import gymnasium as gym
+
 # import normal
 import constant
 from model import ActorCritic
@@ -45,7 +46,16 @@ class RolloutBuffer:
         self.log_probs.clear()
         self.dones.clear()
 
-    def get(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def get(
+        self,
+    ) -> Tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
         return (
             torch.stack(self.states).to(constant.DEVICE),
             torch.stack(self.actions).to(constant.DEVICE),
@@ -73,7 +83,11 @@ def compute_gae(
         if t == len(rewards) - 1:
             next_val = next_value
         else:
-            next_val = values[t + 1].item() if isinstance(values[t + 1], torch.Tensor) else values[t + 1]
+            next_val = (
+                values[t + 1].item()
+                if isinstance(values[t + 1], torch.Tensor)
+                else values[t + 1]
+            )
 
         delta = rewards[t] + gamma * next_val * (1 - dones[t]) - values[t]
         advantages[t] = last_advantage = (
@@ -87,35 +101,49 @@ def compute_gae(
 # ==================== PPO 训练器 ====================
 class PPOTrainer:
     def __init__(self, state_dim: int, action_dim: int) -> None:
-        self.policy: ActorCritic = ActorCritic(state_dim, action_dim, constant.HIDDEN_DIM).to(
-            constant.DEVICE
-        )
+        self.policy: ActorCritic = ActorCritic(
+            state_dim, action_dim, constant.HIDDEN_DIM
+        ).to(constant.DEVICE)
         self.optimizer = optim.Adam(self.policy.parameters(), lr=constant.LEARNING_RATE)
-        
+
         # 创建学习率调度器
         self.scheduler = self._create_scheduler()
-        
+
         self.buffer: RolloutBuffer = RolloutBuffer()
         self.global_step = 0
 
     def _create_scheduler(self):
         """创建学习率调度器"""
         if constant.LR_SCHEDULE == "linear":
+
             def lr_lambda(step):
                 progress = min(step / constant.LR_DECAY_STEPS, 1.0)
-                return max(1.0 - progress, constant.MIN_LEARNING_RATE / constant.LEARNING_RATE)
+                return max(
+                    1.0 - progress, constant.MIN_LEARNING_RATE / constant.LEARNING_RATE
+                )
+
         elif constant.LR_SCHEDULE == "exponential":
+
             def lr_lambda(step):
-                decay_rate = np.log(constant.MIN_LEARNING_RATE / constant.LEARNING_RATE) / constant.LR_DECAY_STEPS
+                decay_rate = (
+                    np.log(constant.MIN_LEARNING_RATE / constant.LEARNING_RATE)
+                    / constant.LR_DECAY_STEPS
+                )
                 return np.exp(decay_rate * step)
+
         elif constant.LR_SCHEDULE == "cosine":
+
             def lr_lambda(step):
                 progress = min(step / constant.LR_DECAY_STEPS, 1.0)
-                return (1 + np.cos(np.pi * progress)) / 2 * (1 - constant.MIN_LEARNING_RATE / constant.LEARNING_RATE) + constant.MIN_LEARNING_RATE / constant.LEARNING_RATE
+                return (1 + np.cos(np.pi * progress)) / 2 * (
+                    1 - constant.MIN_LEARNING_RATE / constant.LEARNING_RATE
+                ) + constant.MIN_LEARNING_RATE / constant.LEARNING_RATE
+
         else:
+
             def lr_lambda(step):
                 return 1.0
-        
+
         return LambdaLR(self.optimizer, lr_lambda)
 
     def update(self, last_state: Optional[torch.Tensor] = None) -> Dict[str, float]:
@@ -263,10 +291,14 @@ def train() -> ActorCritic:
                     reward = 0.25
                 else:
                     reward = -0.2
-            elif reward == 0.1 and len(trainer.buffer.actions) >= 3 and \
-                  trainer.buffer.actions[-1] ==  \
-                 trainer.buffer.actions[-2] == \
-                    trainer.buffer.actions[-3] == 1:
+            elif (
+                reward == 0.1
+                and len(trainer.buffer.actions) >= 3
+                and trainer.buffer.actions[-1]
+                == trainer.buffer.actions[-2]
+                == trainer.buffer.actions[-3]
+                == 1
+            ):
                 reward = -0.2
             elif reward == 0.1:
                 reward = 0.1
@@ -311,6 +343,7 @@ def train() -> ActorCritic:
 
     env.close()
     return trainer.policy
+
 
 if __name__ == "__main__":
     # 训练
