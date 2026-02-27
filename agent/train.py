@@ -283,18 +283,18 @@ def train() -> ActorCritic:
             next_state, reward, terminated, truncated, info = env.step(action.item())
             done = terminated or truncated
 
-            if reward == 0.1 and next_state[3] != 1 and next_state[4] != 0:
-                player_y = next_state[0]
-                next_pipe_top = next_state[3]
-                next_pipe_bottom = next_state[4]
-                gap_center = (next_pipe_top + next_pipe_bottom) / 2
-                reward = normal.custom_normal(player_y, gap_center, 0.1)
-            elif reward == 0.1:
-                player_y = next_state[0]
-                reward = normal.custom_normal(player_y, 1, 0.1)
+            # if reward == 0.1 and next_state[3] != 1 and next_state[4] != 0:
+            #     player_y = next_state[0]
+            #     next_pipe_top = next_state[3]
+            #     next_pipe_bottom = next_state[4]
+            #     gap_center = (next_pipe_top + next_pipe_bottom) / 2
+            #     reward = normal.custom_normal(player_y, gap_center, 0.1)
+            # elif reward == 0.1:
+            #     player_y = next_state[0]
+            #     reward = normal.custom_normal(player_y, 1, 0.1)
 
-            elif reward == -0.5:
-                reward = -0.1
+            # if reward == -0.5:
+            #     reward = -0.1
 
             # 存储经验
             trainer.buffer.add(state, action, reward, value.squeeze(), log_prob, done)
