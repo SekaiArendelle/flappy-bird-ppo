@@ -2,12 +2,13 @@ import torch
 import numpy as np
 from torch import nn
 from torch.distributions import Categorical
+from typing import Tuple
 
 # ==================== Actor-Critic 网络 ====================
 class ActorCritic(nn.Module):
     """共享 backbone 的 Actor-Critic 架构"""
 
-    def __init__(self, state_dim, action_dim, hidden_dim=256):
+    def __init__(self, state_dim: int, action_dim: int, hidden_dim: int = 256) -> None:
         super().__init__()
 
         # 共享特征提取层
@@ -37,19 +38,21 @@ class ActorCritic(nn.Module):
 
         self._init_weights()
 
-    def _init_weights(self):
+    def _init_weights(self) -> None:
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.orthogonal_(m.weight, gain=np.sqrt(2))
                 nn.init.constant_(m.bias, 0)
 
-    def forward(self, state):
+    def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         features = self.shared(state)
         action_probs = self.actor(features)
         state_value = self.critic(features)
         return action_probs, state_value
 
-    def get_action(self, state, deterministic=False):
+    def get_action(
+        self, state: torch.Tensor, deterministic: bool = False
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """采样动作并返回 log_prob"""
         action_probs, state_value = self.forward(state)
         dist = Categorical(action_probs)
@@ -63,7 +66,7 @@ class ActorCritic(nn.Module):
         entropy = dist.entropy()
         return action, log_prob, entropy, state_value
 
-    def evaluate(self, state, action):
+    def evaluate(self, state: torch.Tensor, action: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """评估给定状态下动作的对数概率和价值"""
         action_probs, state_value = self.forward(state)
         dist = Categorical(action_probs)

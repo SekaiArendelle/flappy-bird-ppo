@@ -6,7 +6,7 @@ import gymnasium as gym
 from model import ActorCritic
 
 # ==================== 测试/可视化 ====================
-def test(model_path, num_episodes=5):
+def test(model_path: str, num_episodes: int = 5) -> None:
     """测试训练好的模型"""
     env = gym.make("FlappyBird-v0", render_mode="human", use_lidar=False)
 
@@ -14,7 +14,7 @@ def test(model_path, num_episodes=5):
     action_dim = env.action_space.n
 
     policy = ActorCritic(state_dim, action_dim, constant.HIDDEN_DIM)
-    policy.load_state_dict(torch.load(model_path))
+    policy.load_state_dict(torch.load(model_path, map_location=constant.DEVICE))
     policy.to(constant.DEVICE)
     policy.eval()
 

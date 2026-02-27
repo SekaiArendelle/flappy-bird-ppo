@@ -7,27 +7,36 @@ import gymnasium as gym
 # import normal
 import constant
 from model import ActorCritic
+from typing import List, Optional, Tuple, Dict
 
 
 # ==================== 经验缓冲区 ====================
 class RolloutBuffer:
-    def __init__(self):
-        self.states = []
-        self.actions = []
-        self.rewards = []
-        self.values = []
-        self.log_probs = []
-        self.dones = []
+    def __init__(self) -> None:
+        self.states: List[torch.Tensor] = []
+        self.actions: List[torch.Tensor] = []
+        self.rewards: List[float] = []
+        self.values: List[float] = []
+        self.log_probs: List[torch.Tensor] = []
+        self.dones: List[float] = []
 
-    def add(self, state, action, reward, value, log_prob, done):
+    def add(
+        self,
+        state: torch.Tensor,
+        action: torch.Tensor,
+        reward: float,
+        value: torch.Tensor,
+        log_prob: torch.Tensor,
+        done: bool,
+    ) -> None:
         self.states.append(state)
         self.actions.append(action)
         self.rewards.append(reward)
-        self.values.append(value)
+        self.values.append(float(value))
         self.log_probs.append(log_prob)
-        self.dones.append(done)
+        self.dones.append(float(done))
 
-    def clear(self):
+    def clear(self) -> None:
         self.states.clear()
         self.actions.clear()
         self.rewards.clear()
@@ -35,7 +44,7 @@ class RolloutBuffer:
         self.log_probs.clear()
         self.dones.clear()
 
-    def get(self):
+    def get(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         return (
             torch.stack(self.states).to(constant.DEVICE),
             torch.stack(self.actions).to(constant.DEVICE),
@@ -47,16 +56,23 @@ class RolloutBuffer:
 
 
 # ==================== GAE 优势估计 ====================
-def compute_gae(rewards, values, dones, gamma=0.99, lambda_=0.95, next_value=0):
+def compute_gae(
+    rewards: torch.Tensor,
+    values: torch.Tensor,
+    dones: torch.Tensor,
+    gamma: float = 0.99,
+    lambda_: float = 0.95,
+    next_value: float = 0,
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """广义优势估计 (Generalized Advantage Estimation)"""
     advantages = torch.zeros_like(rewards)
-    last_advantage = 0
+    last_advantage = 0.0
 
     for t in reversed(range(len(rewards))):
         if t == len(rewards) - 1:
             next_val = next_value
         else:
-            next_val = values[t + 1]
+            next_val = values[t + 1].item() if isinstance(values[t + 1], torch.Tensor) else values[t + 1]
 
         delta = rewards[t] + gamma * next_val * (1 - dones[t]) - values[t]
         advantages[t] = last_advantage = (
@@ -69,14 +85,14 @@ def compute_gae(rewards, values, dones, gamma=0.99, lambda_=0.95, next_value=0):
 
 # ==================== PPO 训练器 ====================
 class PPOTrainer:
-    def __init__(self, state_dim, action_dim):
-        self.policy = ActorCritic(state_dim, action_dim, constant.HIDDEN_DIM).to(
+    def __init__(self, state_dim: int, action_dim: int) -> None:
+        self.policy: ActorCritic = ActorCritic(state_dim, action_dim, constant.HIDDEN_DIM).to(
             constant.DEVICE
         )
         self.optimizer = optim.Adam(self.policy.parameters(), lr=constant.LEARNING_RATE)
-        self.buffer = RolloutBuffer()
+        self.buffer: RolloutBuffer = RolloutBuffer()
 
-    def update(self, last_state=None):
+    def update(self, last_state: Optional[torch.Tensor] = None) -> Dict[str, float]:
         """PPO 策略更新"""
         states, actions, rewards, old_values, old_log_probs, dones = self.buffer.get()
 
@@ -89,11 +105,11 @@ class PPOTrainer:
         dones = dones.to(constant.DEVICE)
 
         # 计算最后一个状态的 value 用于 GAE
-        next_value = 0
+        next_value = 0.0
         if last_state is not None:
             with torch.no_grad():
                 _, _, _, next_val = self.policy.get_action(last_state.unsqueeze(0))
-                next_value = next_val.squeeze().item()
+                next_value = float(next_val.squeeze().item())
 
         # 计算 GAE
         advantages, returns = compute_gae(
@@ -169,14 +185,14 @@ class PPOTrainer:
         self.buffer.clear()
 
         return {
-            "policy_loss": policy_loss.item(),
-            "value_loss": value_loss.item(),
-            "entropy": -entropy_loss.item(),
+            "policy_loss": float(policy_loss.item()),
+            "value_loss": float(value_loss.item()),
+            "entropy": float(-entropy_loss.item()),
         }
 
 
 # ==================== 主训练循环 ====================
-def train():
+def train() -> ActorCritic:
     # 创建环境 (使用向量状态而非图像)
     env = gym.make("FlappyBird-v0", render_mode=None, use_lidar=False)
     state_dim = env.observation_space.shape[0]  # 通常是12维向量状态
