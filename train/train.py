@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim.lr_scheduler import LambdaLR
 import numpy as np
 import flappy_bird_gymnasium
 import gymnasium as gym
@@ -90,7 +91,32 @@ class PPOTrainer:
             constant.DEVICE
         )
         self.optimizer = optim.Adam(self.policy.parameters(), lr=constant.LEARNING_RATE)
+        
+        # 创建学习率调度器
+        self.scheduler = self._create_scheduler()
+        
         self.buffer: RolloutBuffer = RolloutBuffer()
+        self.global_step = 0
+
+    def _create_scheduler(self):
+        """创建学习率调度器"""
+        if constant.LR_SCHEDULE == "linear":
+            def lr_lambda(step):
+                progress = min(step / constant.LR_DECAY_STEPS, 1.0)
+                return max(1.0 - progress, constant.MIN_LEARNING_RATE / constant.LEARNING_RATE)
+        elif constant.LR_SCHEDULE == "exponential":
+            def lr_lambda(step):
+                decay_rate = np.log(constant.MIN_LEARNING_RATE / constant.LEARNING_RATE) / constant.LR_DECAY_STEPS
+                return np.exp(decay_rate * step)
+        elif constant.LR_SCHEDULE == "cosine":
+            def lr_lambda(step):
+                progress = min(step / constant.LR_DECAY_STEPS, 1.0)
+                return (1 + np.cos(np.pi * progress)) / 2 * (1 - constant.MIN_LEARNING_RATE / constant.LEARNING_RATE) + constant.MIN_LEARNING_RATE / constant.LEARNING_RATE
+        else:
+            def lr_lambda(step):
+                return 1.0
+        
+        return LambdaLR(self.optimizer, lr_lambda)
 
     def update(self, last_state: Optional[torch.Tensor] = None) -> Dict[str, float]:
         """PPO 策略更新"""
@@ -181,6 +207,9 @@ class PPOTrainer:
                     self.policy.parameters(), constant.MAX_GRAD_NORM
                 )
                 self.optimizer.step()
+
+        # 步进学习率调度器
+        self.scheduler.step()
 
         self.buffer.clear()
 
