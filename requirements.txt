@@ -1,3 +1,4 @@
+ray==2.54.0
 torch==2.10.0
 tensorflow==2.20.0
 flappy-bird-gymnasium==0.4.0

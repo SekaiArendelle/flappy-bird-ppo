@@ -4,3 +4,5 @@ __pycache__/
 video.gif
 *.pyc
 *.pth
+
+checkpoints/
