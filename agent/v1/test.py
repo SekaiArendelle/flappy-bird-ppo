@@ -40,5 +40,5 @@ def test(model_path: str, num_episodes: int = 5) -> None:
 
 if __name__ == "__main__":
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(SCRIPT_DIR, "ppo_flappy_3400.pth")
+    model_path = os.path.join(SCRIPT_DIR, "ppo_flappy_8200.pth")
     test(model_path)

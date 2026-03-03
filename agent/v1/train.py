@@ -293,8 +293,8 @@ def train() -> ActorCritic:
             #     player_y = next_state[0]
             #     reward = normal.custom_normal(player_y, 1, 0.1)
 
-            # if reward == -0.5:
-            #     reward = -0.1
+            if reward == -0.5:
+                reward = 0
 
             # 存储经验
             trainer.buffer.add(state, action, reward, value.squeeze(), log_prob, done)

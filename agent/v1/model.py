@@ -56,10 +56,10 @@ class ActorCritic(nn.Module):
         action_probs, state_value = self.forward(state)
         dist = Categorical(action_probs)
 
-        if deterministic:
-            action = torch.argmax(action_probs, dim=-1)
-        else:
-            action = dist.sample()
+        # if deterministic:
+        #     action = torch.argmax(action_probs, dim=-1)
+        # else:
+        action = dist.sample()
 
         log_prob = dist.log_prob(action)
         entropy = dist.entropy()
