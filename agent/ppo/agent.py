@@ -6,6 +6,9 @@ from typing import Any
 import numpy as np
 import torch
 
+from train.features import extract_diy_features_torch
+from train.model import ActorCriticCNN
+
 
 class PPOInferenceAgent:
     """Inference-only PPO agent loader for Flappy Bird."""
@@ -30,10 +33,23 @@ class PPOInferenceAgent:
                     return checkpoint["model"]
                 if isinstance(checkpoint.get("policy"), torch.nn.Module):
                     return checkpoint["policy"]
+                model_state_dict = checkpoint.get("model_state_dict") or checkpoint.get(
+                    "state_dict"
+                )
+                if isinstance(model_state_dict, dict):
+                    obs_dim = int(checkpoint.get("obs_dim", 12))
+                    feature_dim = int(checkpoint.get("feature_dim", 12))
+                    action_dim = int(checkpoint.get("action_dim", 2))
+                    model = ActorCriticCNN(
+                        obs_dim=obs_dim, feature_dim=feature_dim, action_dim=action_dim
+                    )
+                    model.load_state_dict(model_state_dict)
+                    return model
 
             raise ValueError(
                 "Unsupported PPO model format. Provide a TorchScript model or a checkpoint "
-                "containing a torch.nn.Module under key 'model' or 'policy'."
+                "containing a torch.nn.Module under key 'model' or 'policy', or "
+                "a state-dict checkpoint from train."
             )
 
     def reset(self) -> None:
@@ -42,8 +58,9 @@ class PPOInferenceAgent:
     def act(self, observation) -> int:
         obs = np.asarray(observation, dtype=np.float32)
         obs_t = torch.from_numpy(obs).unsqueeze(0).to(self._device)
+        feat_t = extract_diy_features_torch(obs_t).to(self._device)
         with torch.no_grad():
-            output = self._model(obs_t)
+            output = self._model(obs_t, feat_t)
 
         if isinstance(output, (tuple, list)):
             logits = output[0]
