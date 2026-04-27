@@ -1,8 +1,7 @@
-venv/
+**/venv/
+**/.venv/
+**/__pycache__/
+
 .vscode/
-__pycache__/
-video.gif
 *.pyc
 *.pth
-
-checkpoints/
