@@ -22,10 +22,8 @@ python -m agent --agent diy --episodes 3 --render
 python -m agent --agent ppo --model-path path\to\model.pt --episodes 3 --render
 ```
 
-### Common options
+For full CLI arguments and descriptions, run:
 
-- `--episodes`: number of episodes to run.
-- `--max-steps`: max steps per episode. Use `inf` for unlimited steps.
-- `--seed`: base seed (episode index is added automatically).
-- `--render`: show game window.
-- `--use-lidar`: enable lidar observation (only used by PPO mode).
+```bash
+python -m agent --help
+```
