@@ -12,13 +12,31 @@ from agent.diy import DIYDecisionAgent
 from agent.ppo import PPOInferenceAgent
 
 
+def parse_max_steps(value: str) -> Optional[int]:
+    normalized = value.strip().lower()
+    if normalized == "inf":
+        return None
+
+    steps = int(normalized)
+    if steps <= 0:
+        raise argparse.ArgumentTypeError(
+            "--max-steps must be a positive integer, or 'inf' for unlimited steps."
+        )
+    return steps
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Play Flappy Bird with DIY or PPO agent."
     )
     parser.add_argument("--agent", choices=("diy", "ppo"), default="diy")
     parser.add_argument("--episodes", type=int, default=3)
-    parser.add_argument("--max-steps", type=int, default=5000)
+    parser.add_argument(
+        "--max-steps",
+        type=parse_max_steps,
+        default="inf",
+        help="Max steps per episode. Use inf for unlimited steps.",
+    )
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--render", action="store_true", help="Render game window.")
     parser.add_argument(
