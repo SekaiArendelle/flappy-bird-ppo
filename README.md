@@ -30,13 +30,17 @@ python -m train
 
 The trainer uses DIY-guided engineered features and reward shaping, and also adds a
 behavior-cloning auxiliary loss from the DIY policy as a baseline signal.
+Imitation is enabled in early training, and is automatically disabled once
+`mean_score_10` is close to the measured DIY baseline score
+(`--imitation-stop-score-gap`), after which optimization relies on PPO losses and
+reward shaping only.
 Training runs indefinitely until interrupted by `Ctrl+C`.
 Training writes two checkpoints to `checkpoints\`:
 `latest.pt` (latest update) and `best.pt` (best `mean_score_10`,
 with `mean_reward_10` as tie-breaker).
 
-For full CLI arguments and descriptions, run:
+For full trainer CLI arguments and descriptions, run:
 
 ```bash
-python -m agent --help
+python -m train --help
 ```

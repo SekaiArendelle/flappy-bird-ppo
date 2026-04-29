@@ -32,6 +32,8 @@ class PPOConfig:
     ent_coef: float
     vf_coef: float
     imitation_coef: float
+    diy_baseline_episodes: int
+    imitation_stop_score_gap: float
     learning_rate: float
     max_grad_norm: float
     seed: int
@@ -99,6 +101,18 @@ def parse_args() -> PPOConfig:
         help="DIY baseline imitation loss coefficient (behavior cloning auxiliary loss).",
     )
     parser.add_argument(
+        "--diy-baseline-episodes",
+        type=int,
+        default=8,
+        help="Episodes used to estimate DIY baseline performance before training.",
+    )
+    parser.add_argument(
+        "--imitation-stop-score-gap",
+        type=float,
+        default=0.5,
+        help="Stop imitation once mean_score_10 is within this gap from DIY baseline score.",
+    )
+    parser.add_argument(
         "--learning-rate", type=float, default=3e-4, help="Adam learning rate."
     )
     parser.add_argument(
@@ -119,6 +133,8 @@ def parse_args() -> PPOConfig:
         ent_coef=args.ent_coef,
         vf_coef=args.vf_coef,
         imitation_coef=args.imitation_coef,
+        diy_baseline_episodes=args.diy_baseline_episodes,
+        imitation_stop_score_gap=args.imitation_stop_score_gap,
         learning_rate=args.learning_rate,
         max_grad_norm=args.max_grad_norm,
         seed=args.seed,
@@ -131,12 +147,47 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
 
 
+def evaluate_diy_baseline(seed: int, episodes: int) -> tuple[float, float]:
+    episode_count = max(1, episodes)
+    diy_agent = DIYDecisionAgent()
+    episode_rewards: list[float] = []
+    episode_scores: list[int] = []
+    with gym.make("FlappyBird-v0", render_mode=None, use_lidar=False) as env:
+        for episode in range(episode_count):
+            observation, info = env.reset(seed=seed + episode)
+            diy_agent.reset()
+            episode_reward = 0.0
+            score = int(info.get("score", 0))
+
+            while True:
+                action = int(diy_agent.act(observation))
+                observation, reward, terminated, truncated, info = env.step(action)
+                episode_reward += float(reward)
+                score = int(info.get("score", score))
+                if terminated or truncated:
+                    break
+
+            episode_rewards.append(episode_reward)
+            episode_scores.append(score)
+
+    return float(np.mean(episode_scores)), float(np.mean(episode_rewards))
+
+
 def train(config: PPOConfig) -> None:
     set_seed(config.seed)
     device = torch.device(config.device)
     latest_save_path = LATEST_SAVE_PATH
     best_save_path = BEST_SAVE_PATH
     update = 0
+    diy_baseline_score, diy_baseline_reward = evaluate_diy_baseline(
+        seed=config.seed, episodes=config.diy_baseline_episodes
+    )
+    imitation_active = config.imitation_coef > 0.0
+    print(
+        f"diy_baseline episodes={max(1, config.diy_baseline_episodes)} "
+        f"mean_reward={diy_baseline_reward:.2f} mean_score={diy_baseline_score:.2f} "
+        f"imitation_active={imitation_active}"
+    )
     with gym.make("FlappyBird-v0", render_mode=None, use_lidar=False) as env:
         observation, _ = env.reset(seed=config.seed)
         obs_dim = int(np.asarray(observation).shape[0])
@@ -242,7 +293,9 @@ def train(config: PPOConfig) -> None:
                 b_logprobs = torch.from_numpy(logprob_buf).to(device)
                 b_returns = torch.from_numpy(returns).to(device)
                 b_advantages = torch.from_numpy(advantages).to(device)
-                b_diy_actions = torch.from_numpy(diy_action_buf).to(device)
+                imitation_coef = config.imitation_coef if imitation_active else 0.0
+                if imitation_coef > 0.0:
+                    b_diy_actions = torch.from_numpy(diy_action_buf).to(device)
 
                 b_advantages = (b_advantages - b_advantages.mean()) / (
                     b_advantages.std() + 1e-8
@@ -260,7 +313,8 @@ def train(config: PPOConfig) -> None:
                         mb_old_logprobs = b_logprobs[mb_inds]
                         mb_returns = b_returns[mb_inds]
                         mb_advantages = b_advantages[mb_inds]
-                        mb_diy_actions = b_diy_actions[mb_inds]
+                        if imitation_coef > 0.0:
+                            mb_diy_actions = b_diy_actions[mb_inds]
 
                         logits, values = model(mb_obs, mb_feat)
                         dist = Categorical(logits=logits)
@@ -276,13 +330,14 @@ def train(config: PPOConfig) -> None:
                         pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
                         value_loss = F.mse_loss(values, mb_returns)
-                        imitation_loss = F.cross_entropy(logits, mb_diy_actions)
                         loss = (
                             pg_loss
                             + config.vf_coef * value_loss
                             - config.ent_coef * entropy
-                            + config.imitation_coef * imitation_loss
                         )
+                        if imitation_coef > 0.0:
+                            imitation_loss = F.cross_entropy(logits, mb_diy_actions)
+                            loss = loss + imitation_coef * imitation_loss
 
                         optimizer.zero_grad()
                         loss.backward()
@@ -299,8 +354,18 @@ def train(config: PPOConfig) -> None:
                 )
                 print(
                     f"update={update} global_step={global_step} "
-                    f"mean_reward_10={mean_reward:.2f} mean_score_10={mean_score:.2f}"
+                    f"mean_reward_10={mean_reward:.2f} mean_score_10={mean_score:.2f} "
+                    f"imitation_coef={imitation_coef:.4f}"
                 )
+                if imitation_active and (
+                    mean_score >= diy_baseline_score - config.imitation_stop_score_gap
+                ):
+                    imitation_active = False
+                    print(
+                        f"imitation_disabled update={update} mean_score_10={mean_score:.2f} "
+                        f"diy_mean_score={diy_baseline_score:.2f} "
+                        f"stop_gap={config.imitation_stop_score_gap:.2f}"
+                    )
 
                 checkpoint_payload = {
                     "model_state_dict": model.state_dict(),
@@ -313,6 +378,9 @@ def train(config: PPOConfig) -> None:
                     "global_step": global_step,
                     "mean_reward_10": mean_reward,
                     "mean_score_10": mean_score,
+                    "diy_baseline_mean_reward": diy_baseline_reward,
+                    "diy_baseline_mean_score": diy_baseline_score,
+                    "imitation_active": imitation_active,
                 }
                 latest_checkpoint_saver.stage(checkpoint_payload)
 
