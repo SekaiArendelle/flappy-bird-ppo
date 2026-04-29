@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from train.features import extract_diy_features_torch
-from train.model import ActorCriticCNN
+from train.model import ActorCritic
 
 
 class PPOInferenceAgent:
@@ -40,7 +40,7 @@ class PPOInferenceAgent:
                     obs_dim = int(checkpoint.get("obs_dim", 12))
                     feature_dim = int(checkpoint.get("feature_dim", 12))
                     action_dim = int(checkpoint.get("action_dim", 2))
-                    model = ActorCriticCNN(
+                    model = ActorCritic(
                         obs_dim=obs_dim, feature_dim=feature_dim, action_dim=action_dim
                     )
                     model.load_state_dict(model_state_dict)

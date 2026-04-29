@@ -14,7 +14,7 @@ from torch.distributions import Categorical
 import flappy_bird_gymnasium  # noqa: F401
 from agent.diy import DIYDecisionAgent
 from train.features import extract_diy_features_torch, shaped_reward_from_features
-from train.model import ActorCriticCNN
+from train.model import ActorCritic
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CHECKPOINT_DIR = PROJECT_ROOT / "checkpoints"
@@ -263,7 +263,7 @@ def train(config: PPOConfig) -> None:
         obs = np.asarray(observation, dtype=np.float32)
         obs_dim = int(obs.shape[1])
         feature_dim = 12
-        model = ActorCriticCNN(
+        model = ActorCritic(
             obs_dim=obs_dim, feature_dim=feature_dim, action_dim=2
         ).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)

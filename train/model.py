@@ -4,7 +4,7 @@ import torch
 from torch import nn
 
 
-class ActorCriticCNN(nn.Module):
+class ActorCritic(nn.Module):
     def __init__(
         self, obs_dim: int, feature_dim: int = 12, action_dim: int = 2
     ) -> None:
@@ -13,20 +13,10 @@ class ActorCriticCNN(nn.Module):
         self.feature_dim = feature_dim
         self.action_dim = action_dim
 
-        self.encoder = nn.Sequential(
-            nn.Conv1d(1, 16, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv1d(16, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv1d(32, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool1d(16),
-            nn.Flatten(),
-        )
-
-        encoded_dim = 32 * 16
         self.backbone = nn.Sequential(
-            nn.Linear(encoded_dim + feature_dim, 256),
+            nn.Linear(obs_dim + feature_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
             nn.ReLU(),
             nn.Linear(256, 128),
             nn.ReLU(),
@@ -42,9 +32,7 @@ class ActorCriticCNN(nn.Module):
         if diy_features.ndim == 1:
             diy_features = diy_features.unsqueeze(0)
 
-        x = observation.unsqueeze(1)
-        z = self.encoder(x)
-        h = self.backbone(torch.cat([z, diy_features], dim=1))
+        h = self.backbone(torch.cat([observation, diy_features], dim=1))
         logits = self.actor(h)
         value = self.critic(h).squeeze(-1)
         return logits, value
