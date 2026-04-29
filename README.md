@@ -38,6 +38,8 @@ Training runs indefinitely until interrupted by `Ctrl+C`.
 Training writes two checkpoints to `checkpoints\`:
 `latest.pt` (latest update) and `best.pt` (best `mean_score_10`,
 with `mean_reward_10` as tie-breaker).
+Rollout collection uses multi-process `AsyncVectorEnv` (`--num-envs`, default `4`)
+to speed up data collection; `--rollout-steps` must be divisible by `--num-envs`.
 
 For full trainer CLI arguments and descriptions, run:
 

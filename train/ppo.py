@@ -8,6 +8,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn.functional as F
+from gymnasium.vector import AsyncVectorEnv
 from torch.distributions import Categorical
 
 import flappy_bird_gymnasium  # noqa: F401
@@ -24,6 +25,7 @@ BEST_SAVE_PATH = CHECKPOINT_DIR / "best.pt"
 @dataclass
 class PPOConfig:
     rollout_steps: int
+    num_envs: int
     update_epochs: int
     minibatch_size: int
     gamma: float
@@ -86,6 +88,12 @@ def parse_args() -> PPOConfig:
         type=int,
         default=1024,
         help="Steps collected before each PPO update.",
+    )
+    parser.add_argument(
+        "--num-envs",
+        type=int,
+        default=4,
+        help="Number of subprocess environments for parallel rollout collection.",
     )
     parser.add_argument(
         "--update-epochs",
@@ -156,6 +164,7 @@ def parse_args() -> PPOConfig:
     args = parser.parse_args()
     return PPOConfig(
         rollout_steps=args.rollout_steps,
+        num_envs=args.num_envs,
         update_epochs=args.update_epochs,
         minibatch_size=args.minibatch_size,
         gamma=args.gamma,
@@ -206,12 +215,36 @@ def evaluate_diy_baseline(seed: int, episodes: int) -> tuple[float, float]:
     return float(np.mean(episode_scores)), float(np.mean(episode_rewards))
 
 
+def make_flappy_env():
+    return gym.make("FlappyBird-v0", render_mode=None, use_lidar=False)
+
+
+def _extract_vector_info_int(
+    info: dict[str, np.ndarray], key: str, index: int, default: int = 0
+) -> int:
+    values = info.get(key)
+    if values is None:
+        return default
+
+    mask_key = f"_{key}"
+    mask = info.get(mask_key)
+    if mask is not None and not bool(mask[index]):
+        return default
+    return int(values[index])
+
+
 def train(config: PPOConfig) -> None:
     set_seed(config.seed)
+    if config.num_envs <= 0:
+        raise ValueError("--num-envs must be a positive integer.")
+    if config.rollout_steps % config.num_envs != 0:
+        raise ValueError("--rollout-steps must be divisible by --num-envs.")
+
     device = torch.device(config.device)
     latest_save_path = LATEST_SAVE_PATH
     best_save_path = BEST_SAVE_PATH
     update = 0
+    rollout_steps_per_env = config.rollout_steps // config.num_envs
     diy_baseline_score, diy_baseline_reward = evaluate_diy_baseline(
         seed=config.seed, episodes=config.diy_baseline_episodes
     )
@@ -221,24 +254,33 @@ def train(config: PPOConfig) -> None:
         f"mean_reward={diy_baseline_reward:.2f} mean_score={diy_baseline_score:.2f} "
         f"imitation_active={imitation_active}"
     )
-    with gym.make("FlappyBird-v0", render_mode=None, use_lidar=False) as env:
-        observation, _ = env.reset(seed=config.seed)
-        obs_dim = int(np.asarray(observation).shape[0])
+    env_fns = [make_flappy_env for _ in range(config.num_envs)]
+    envs = AsyncVectorEnv(env_fns)
+    try:
+        observation, _ = envs.reset(
+            seed=[config.seed + i for i in range(config.num_envs)]
+        )
+        obs = np.asarray(observation, dtype=np.float32)
+        obs_dim = int(obs.shape[1])
         feature_dim = 12
         model = ActorCriticCNN(
             obs_dim=obs_dim, feature_dim=feature_dim, action_dim=2
         ).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
-        diy_agent = DIYDecisionAgent()
-        diy_agent.reset()
-        rollout_steps = config.rollout_steps
+        diy_agents = [DIYDecisionAgent() for _ in range(config.num_envs)]
+        for diy_agent in diy_agents:
+            diy_agent.reset()
         episode_rewards: list[float] = []
         episode_scores: list[int] = []
-        running_episode_reward = 0.0
-        obs = np.asarray(observation, dtype=np.float32)
+        running_episode_rewards = np.zeros((config.num_envs,), dtype=np.float32)
         global_step = 0
         best_mean_score = float("-inf")
         best_mean_reward = float("-inf")
+
+        print(
+            f"collector=async_vector_env num_envs={config.num_envs} "
+            f"rollout_steps_per_env={rollout_steps_per_env} batch_size={config.rollout_steps}"
+        )
 
         with DeferredLatestCheckpointSaver(latest_save_path) as latest_checkpoint_saver:
             while True:
@@ -248,15 +290,29 @@ def train(config: PPOConfig) -> None:
                     lr_now = config.learning_rate * (1.0 - progress)
                     for param_group in optimizer.param_groups:
                         param_group["lr"] = lr_now
-                obs_buf = np.zeros((rollout_steps, obs_dim), dtype=np.float32)
-                action_buf = np.zeros((rollout_steps,), dtype=np.int64)
-                logprob_buf = np.zeros((rollout_steps,), dtype=np.float32)
-                value_buf = np.zeros((rollout_steps,), dtype=np.float32)
-                reward_buf = np.zeros((rollout_steps,), dtype=np.float32)
-                done_buf = np.zeros((rollout_steps,), dtype=np.float32)
-                diy_action_buf = np.zeros((rollout_steps,), dtype=np.int64)
+                obs_buf = np.zeros(
+                    (rollout_steps_per_env, config.num_envs, obs_dim), dtype=np.float32
+                )
+                action_buf = np.zeros(
+                    (rollout_steps_per_env, config.num_envs), dtype=np.int64
+                )
+                logprob_buf = np.zeros(
+                    (rollout_steps_per_env, config.num_envs), dtype=np.float32
+                )
+                value_buf = np.zeros(
+                    (rollout_steps_per_env, config.num_envs), dtype=np.float32
+                )
+                reward_buf = np.zeros(
+                    (rollout_steps_per_env, config.num_envs), dtype=np.float32
+                )
+                done_buf = np.zeros(
+                    (rollout_steps_per_env, config.num_envs), dtype=np.float32
+                )
+                diy_action_buf = np.zeros(
+                    (rollout_steps_per_env, config.num_envs), dtype=np.int64
+                )
 
-                for t in range(rollout_steps):
+                for t in range(rollout_steps_per_env):
                     obs_buf[t] = obs
                     obs_t = torch.from_numpy(obs).to(device)
                     feat_t = extract_diy_features_torch(obs_t).to(device)
@@ -266,33 +322,48 @@ def train(config: PPOConfig) -> None:
                         action = dist.sample()
                         logprob = dist.log_prob(action)
 
-                    action_i = int(action.item())
-                    diy_action_buf[t] = int(diy_agent.act(obs))
-                    action_buf[t] = action_i
-                    logprob_buf[t] = float(logprob.item())
-                    value_buf[t] = float(value.item())
+                    action_np = action.cpu().numpy().astype(np.int64)
+                    diy_action_buf[t] = np.asarray(
+                        [agent.act(obs[i]) for i, agent in enumerate(diy_agents)],
+                        dtype=np.int64,
+                    )
+                    action_buf[t] = action_np
+                    logprob_buf[t] = logprob.cpu().numpy().astype(np.float32)
+                    value_buf[t] = value.cpu().numpy().astype(np.float32)
 
-                    next_obs, env_reward, terminated, truncated, info = env.step(
-                        action_i
+                    next_obs, env_reward, terminated, truncated, info = envs.step(
+                        action_np
                     )
                     next_obs = np.asarray(next_obs, dtype=np.float32)
-                    done = bool(terminated or truncated)
-                    shaped_reward = shaped_reward_from_features(
-                        float(env_reward), next_obs
+                    env_reward = np.asarray(env_reward, dtype=np.float32)
+                    done = np.logical_or(terminated, truncated)
+                    shaped_reward = np.asarray(
+                        [
+                            shaped_reward_from_features(
+                                float(env_reward[i]), next_obs[i]
+                            )
+                            for i in range(config.num_envs)
+                        ],
+                        dtype=np.float32,
                     )
 
-                    reward_buf[t] = float(shaped_reward)
-                    done_buf[t] = 1.0 if done else 0.0
-                    running_episode_reward += float(env_reward)
-                    global_step += 1
+                    reward_buf[t] = shaped_reward
+                    done_buf[t] = done.astype(np.float32)
+                    running_episode_rewards += env_reward
+                    global_step += config.num_envs
 
-                    if done:
-                        episode_rewards.append(running_episode_reward)
-                        episode_scores.append(int(info.get("score", 0)))
-                        running_episode_reward = 0.0
-                        next_obs, _ = env.reset(seed=config.seed + len(episode_rewards))
-                        next_obs = np.asarray(next_obs, dtype=np.float32)
-                        diy_agent.reset()
+                    done_indices = np.flatnonzero(done)
+                    for env_index in done_indices:
+                        episode_rewards.append(
+                            float(running_episode_rewards[env_index])
+                        )
+                        episode_scores.append(
+                            _extract_vector_info_int(
+                                info, "score", int(env_index), default=0
+                            )
+                        )
+                        running_episode_rewards[env_index] = 0.0
+                        diy_agents[int(env_index)].reset()
 
                     obs = next_obs
 
@@ -300,14 +371,16 @@ def train(config: PPOConfig) -> None:
                     next_obs_t = torch.from_numpy(obs).to(device)
                     next_feat_t = extract_diy_features_torch(next_obs_t).to(device)
                     _, next_value = model(next_obs_t, next_feat_t)
-                    next_value_f = float(next_value.item())
+                    next_value_np = next_value.cpu().numpy().astype(np.float32)
 
-                advantages = np.zeros((rollout_steps,), dtype=np.float32)
-                last_gae_lam = 0.0
-                for t in reversed(range(rollout_steps)):
-                    if t == rollout_steps - 1:
+                advantages = np.zeros(
+                    (rollout_steps_per_env, config.num_envs), dtype=np.float32
+                )
+                last_gae_lam = np.zeros((config.num_envs,), dtype=np.float32)
+                for t in reversed(range(rollout_steps_per_env)):
+                    if t == rollout_steps_per_env - 1:
                         next_non_terminal = 1.0 - done_buf[t]
-                        next_values = next_value_f
+                        next_values = next_value_np
                     else:
                         next_non_terminal = 1.0 - done_buf[t]
                         next_values = value_buf[t + 1]
@@ -326,25 +399,34 @@ def train(config: PPOConfig) -> None:
                     advantages[t] = last_gae_lam
                 returns = advantages + value_buf
 
-                b_obs = torch.from_numpy(obs_buf).to(device)
-                b_actions = torch.from_numpy(action_buf).to(device)
-                b_logprobs = torch.from_numpy(logprob_buf).to(device)
-                b_returns = torch.from_numpy(returns).to(device)
-                b_advantages = torch.from_numpy(advantages).to(device)
+                batch_size = rollout_steps_per_env * config.num_envs
+                b_obs = torch.from_numpy(obs_buf.reshape(batch_size, obs_dim)).to(
+                    device
+                )
+                b_actions = torch.from_numpy(action_buf.reshape(batch_size)).to(device)
+                b_logprobs = torch.from_numpy(logprob_buf.reshape(batch_size)).to(
+                    device
+                )
+                b_returns = torch.from_numpy(returns.reshape(batch_size)).to(device)
+                b_advantages = torch.from_numpy(advantages.reshape(batch_size)).to(
+                    device
+                )
                 imitation_coef = config.imitation_coef if imitation_active else 0.0
                 if imitation_coef > 0.0:
-                    b_diy_actions = torch.from_numpy(diy_action_buf).to(device)
+                    b_diy_actions = torch.from_numpy(
+                        diy_action_buf.reshape(batch_size)
+                    ).to(device)
 
                 b_advantages = (b_advantages - b_advantages.mean()) / (
                     b_advantages.std() + 1e-8
                 )
-                b_inds = np.arange(rollout_steps)
+                b_inds = np.arange(batch_size)
 
                 approx_kl = 0.0
                 early_stop = False
                 for epoch in range(config.update_epochs):
                     np.random.shuffle(b_inds)
-                    for start in range(0, rollout_steps, config.minibatch_size):
+                    for start in range(0, batch_size, config.minibatch_size):
                         end = start + config.minibatch_size
                         mb_inds = b_inds[start:end]
                         mb_obs = b_obs[mb_inds]
@@ -453,8 +535,13 @@ def train(config: PPOConfig) -> None:
                         f"best_mean_score_10={best_mean_score:.2f}"
                     )
 
-                if config.total_timesteps is not None and global_step >= config.total_timesteps:
+                if (
+                    config.total_timesteps is not None
+                    and global_step >= config.total_timesteps
+                ):
                     break
+    finally:
+        envs.close()
 
     print(
         f"training_done latest_model={latest_save_path} " f"best_model={best_save_path}"
