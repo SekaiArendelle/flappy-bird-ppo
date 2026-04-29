@@ -25,11 +25,12 @@ python -m agent --agent ppo --model-path path\to\model.pt --episodes 3 --render
 ### 3. Train PPO (Actor-Critic + CNN)
 
 ```bash
-python -m train --total-timesteps 200000
+python -m train
 ```
 
 The trainer uses DIY-guided engineered features and reward shaping, and also adds a
 behavior-cloning auxiliary loss from the DIY policy as a baseline signal.
+Training runs indefinitely until interrupted by `Ctrl+C`.
 Training writes two checkpoints to `checkpoints\`:
 `latest.pt` (latest update) and `best.pt` (best `mean_score_10`,
 with `mean_reward_10` as tie-breaker).

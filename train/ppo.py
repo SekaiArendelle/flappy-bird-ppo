@@ -23,7 +23,6 @@ BEST_SAVE_PATH = CHECKPOINT_DIR / "best.pt"
 
 @dataclass
 class PPOConfig:
-    total_timesteps: int
     rollout_steps: int
     update_epochs: int
     minibatch_size: int
@@ -60,9 +59,6 @@ class DeferredLatestCheckpointSaver:
 def parse_args() -> PPOConfig:
     parser = argparse.ArgumentParser(
         description="Train PPO (Actor-Critic + CNN) for Flappy Bird with DIY baseline guidance."
-    )
-    parser.add_argument(
-        "--total-timesteps", type=int, default=200_000, help="Total environment steps."
     )
     parser.add_argument(
         "--rollout-steps",
@@ -114,7 +110,6 @@ def parse_args() -> PPOConfig:
     )
     args = parser.parse_args()
     return PPOConfig(
-        total_timesteps=args.total_timesteps,
         rollout_steps=args.rollout_steps,
         update_epochs=args.update_epochs,
         minibatch_size=args.minibatch_size,
@@ -139,198 +134,200 @@ def set_seed(seed: int) -> None:
 def train(config: PPOConfig) -> None:
     set_seed(config.seed)
     device = torch.device(config.device)
-
-    env = gym.make("FlappyBird-v0", render_mode=None, use_lidar=False)
-    observation, _ = env.reset(seed=config.seed)
-    obs_dim = int(np.asarray(observation).shape[0])
-    feature_dim = 12
-
-    model = ActorCriticCNN(obs_dim=obs_dim, feature_dim=feature_dim, action_dim=2).to(
-        device
-    )
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
-    diy_agent = DIYDecisionAgent()
-    diy_agent.reset()
-
-    rollout_steps = config.rollout_steps
-    num_updates = max(1, config.total_timesteps // rollout_steps)
-
-    episode_rewards: list[float] = []
-    episode_scores: list[int] = []
-    running_episode_reward = 0.0
-
-    obs = np.asarray(observation, dtype=np.float32)
-    global_step = 0
-    best_mean_score = float("-inf")
-    best_mean_reward = float("-inf")
     latest_save_path = LATEST_SAVE_PATH
     best_save_path = BEST_SAVE_PATH
-    with DeferredLatestCheckpointSaver(latest_save_path) as latest_checkpoint_saver:
-        for update in range(1, num_updates + 1):
-            obs_buf = np.zeros((rollout_steps, obs_dim), dtype=np.float32)
-            action_buf = np.zeros((rollout_steps,), dtype=np.int64)
-            logprob_buf = np.zeros((rollout_steps,), dtype=np.float32)
-            value_buf = np.zeros((rollout_steps,), dtype=np.float32)
-            reward_buf = np.zeros((rollout_steps,), dtype=np.float32)
-            done_buf = np.zeros((rollout_steps,), dtype=np.float32)
-            diy_action_buf = np.zeros((rollout_steps,), dtype=np.int64)
+    update = 0
+    with gym.make("FlappyBird-v0", render_mode=None, use_lidar=False) as env:
+        observation, _ = env.reset(seed=config.seed)
+        obs_dim = int(np.asarray(observation).shape[0])
+        feature_dim = 12
+        model = ActorCriticCNN(
+            obs_dim=obs_dim, feature_dim=feature_dim, action_dim=2
+        ).to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+        diy_agent = DIYDecisionAgent()
+        diy_agent.reset()
+        rollout_steps = config.rollout_steps
+        episode_rewards: list[float] = []
+        episode_scores: list[int] = []
+        running_episode_reward = 0.0
+        obs = np.asarray(observation, dtype=np.float32)
+        global_step = 0
+        best_mean_score = float("-inf")
+        best_mean_reward = float("-inf")
 
-            for t in range(rollout_steps):
-                obs_buf[t] = obs
-                obs_t = torch.from_numpy(obs).to(device)
-                feat_t = extract_diy_features_torch(obs_t).to(device)
-                with torch.no_grad():
-                    logits, value = model(obs_t, feat_t)
-                    dist = Categorical(logits=logits)
-                    action = dist.sample()
-                    logprob = dist.log_prob(action)
+        with DeferredLatestCheckpointSaver(latest_save_path) as latest_checkpoint_saver:
+            while True:
+                update += 1
+                obs_buf = np.zeros((rollout_steps, obs_dim), dtype=np.float32)
+                action_buf = np.zeros((rollout_steps,), dtype=np.int64)
+                logprob_buf = np.zeros((rollout_steps,), dtype=np.float32)
+                value_buf = np.zeros((rollout_steps,), dtype=np.float32)
+                reward_buf = np.zeros((rollout_steps,), dtype=np.float32)
+                done_buf = np.zeros((rollout_steps,), dtype=np.float32)
+                diy_action_buf = np.zeros((rollout_steps,), dtype=np.int64)
 
-                action_i = int(action.item())
-                diy_action_buf[t] = int(diy_agent.act(obs))
-                action_buf[t] = action_i
-                logprob_buf[t] = float(logprob.item())
-                value_buf[t] = float(value.item())
+                for t in range(rollout_steps):
+                    obs_buf[t] = obs
+                    obs_t = torch.from_numpy(obs).to(device)
+                    feat_t = extract_diy_features_torch(obs_t).to(device)
+                    with torch.no_grad():
+                        logits, value = model(obs_t, feat_t)
+                        dist = Categorical(logits=logits)
+                        action = dist.sample()
+                        logprob = dist.log_prob(action)
 
-                next_obs, env_reward, terminated, truncated, info = env.step(action_i)
-                next_obs = np.asarray(next_obs, dtype=np.float32)
-                done = bool(terminated or truncated)
-                shaped_reward = shaped_reward_from_features(float(env_reward), next_obs)
+                    action_i = int(action.item())
+                    diy_action_buf[t] = int(diy_agent.act(obs))
+                    action_buf[t] = action_i
+                    logprob_buf[t] = float(logprob.item())
+                    value_buf[t] = float(value.item())
 
-                reward_buf[t] = float(shaped_reward)
-                done_buf[t] = 1.0 if done else 0.0
-                running_episode_reward += float(env_reward)
-                global_step += 1
-
-                if done:
-                    episode_rewards.append(running_episode_reward)
-                    episode_scores.append(int(info.get("score", 0)))
-                    running_episode_reward = 0.0
-                    next_obs, _ = env.reset()
+                    next_obs, env_reward, terminated, truncated, info = env.step(
+                        action_i
+                    )
                     next_obs = np.asarray(next_obs, dtype=np.float32)
-                    diy_agent.reset()
+                    done = bool(terminated or truncated)
+                    shaped_reward = shaped_reward_from_features(
+                        float(env_reward), next_obs
+                    )
 
-                obs = next_obs
+                    reward_buf[t] = float(shaped_reward)
+                    done_buf[t] = 1.0 if done else 0.0
+                    running_episode_reward += float(env_reward)
+                    global_step += 1
 
-            with torch.no_grad():
-                next_obs_t = torch.from_numpy(obs).to(device)
-                next_feat_t = extract_diy_features_torch(next_obs_t).to(device)
-                _, next_value = model(next_obs_t, next_feat_t)
-                next_value_f = float(next_value.item())
+                    if done:
+                        episode_rewards.append(running_episode_reward)
+                        episode_scores.append(int(info.get("score", 0)))
+                        running_episode_reward = 0.0
+                        next_obs, _ = env.reset()
+                        next_obs = np.asarray(next_obs, dtype=np.float32)
+                        diy_agent.reset()
 
-            advantages = np.zeros((rollout_steps,), dtype=np.float32)
-            last_gae_lam = 0.0
-            for t in reversed(range(rollout_steps)):
-                if t == rollout_steps - 1:
-                    next_non_terminal = 1.0 - done_buf[t]
-                    next_values = next_value_f
-                else:
-                    next_non_terminal = 1.0 - done_buf[t + 1]
-                    next_values = value_buf[t + 1]
-                delta = (
-                    reward_buf[t]
-                    + config.gamma * next_values * next_non_terminal
-                    - value_buf[t]
+                    obs = next_obs
+
+                with torch.no_grad():
+                    next_obs_t = torch.from_numpy(obs).to(device)
+                    next_feat_t = extract_diy_features_torch(next_obs_t).to(device)
+                    _, next_value = model(next_obs_t, next_feat_t)
+                    next_value_f = float(next_value.item())
+
+                advantages = np.zeros((rollout_steps,), dtype=np.float32)
+                last_gae_lam = 0.0
+                for t in reversed(range(rollout_steps)):
+                    if t == rollout_steps - 1:
+                        next_non_terminal = 1.0 - done_buf[t]
+                        next_values = next_value_f
+                    else:
+                        next_non_terminal = 1.0 - done_buf[t + 1]
+                        next_values = value_buf[t + 1]
+                    delta = (
+                        reward_buf[t]
+                        + config.gamma * next_values * next_non_terminal
+                        - value_buf[t]
+                    )
+                    last_gae_lam = (
+                        delta
+                        + config.gamma
+                        * config.gae_lambda
+                        * next_non_terminal
+                        * last_gae_lam
+                    )
+                    advantages[t] = last_gae_lam
+                returns = advantages + value_buf
+
+                b_obs = torch.from_numpy(obs_buf).to(device)
+                b_actions = torch.from_numpy(action_buf).to(device)
+                b_logprobs = torch.from_numpy(logprob_buf).to(device)
+                b_returns = torch.from_numpy(returns).to(device)
+                b_advantages = torch.from_numpy(advantages).to(device)
+                b_diy_actions = torch.from_numpy(diy_action_buf).to(device)
+
+                b_advantages = (b_advantages - b_advantages.mean()) / (
+                    b_advantages.std() + 1e-8
                 )
-                last_gae_lam = (
-                    delta
-                    + config.gamma
-                    * config.gae_lambda
-                    * next_non_terminal
-                    * last_gae_lam
+                b_inds = np.arange(rollout_steps)
+
+                for _ in range(config.update_epochs):
+                    np.random.shuffle(b_inds)
+                    for start in range(0, rollout_steps, config.minibatch_size):
+                        end = start + config.minibatch_size
+                        mb_inds = b_inds[start:end]
+                        mb_obs = b_obs[mb_inds]
+                        mb_feat = extract_diy_features_torch(mb_obs)
+                        mb_actions = b_actions[mb_inds]
+                        mb_old_logprobs = b_logprobs[mb_inds]
+                        mb_returns = b_returns[mb_inds]
+                        mb_advantages = b_advantages[mb_inds]
+                        mb_diy_actions = b_diy_actions[mb_inds]
+
+                        logits, values = model(mb_obs, mb_feat)
+                        dist = Categorical(logits=logits)
+                        new_logprobs = dist.log_prob(mb_actions)
+                        entropy = dist.entropy().mean()
+
+                        logratio = new_logprobs - mb_old_logprobs
+                        ratio = logratio.exp()
+                        pg_loss1 = -mb_advantages * ratio
+                        pg_loss2 = -mb_advantages * torch.clamp(
+                            ratio, 1.0 - config.clip_coef, 1.0 + config.clip_coef
+                        )
+                        pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+
+                        value_loss = F.mse_loss(values, mb_returns)
+                        imitation_loss = F.cross_entropy(logits, mb_diy_actions)
+                        loss = (
+                            pg_loss
+                            + config.vf_coef * value_loss
+                            - config.ent_coef * entropy
+                            + config.imitation_coef * imitation_loss
+                        )
+
+                        optimizer.zero_grad()
+                        loss.backward()
+                        torch.nn.utils.clip_grad_norm_(
+                            model.parameters(), config.max_grad_norm
+                        )
+                        optimizer.step()
+
+                mean_reward = (
+                    float(np.mean(episode_rewards[-10:])) if episode_rewards else 0.0
                 )
-                advantages[t] = last_gae_lam
-            returns = advantages + value_buf
-
-            b_obs = torch.from_numpy(obs_buf).to(device)
-            b_actions = torch.from_numpy(action_buf).to(device)
-            b_logprobs = torch.from_numpy(logprob_buf).to(device)
-            b_returns = torch.from_numpy(returns).to(device)
-            b_advantages = torch.from_numpy(advantages).to(device)
-            b_diy_actions = torch.from_numpy(diy_action_buf).to(device)
-
-            b_advantages = (b_advantages - b_advantages.mean()) / (
-                b_advantages.std() + 1e-8
-            )
-            b_inds = np.arange(rollout_steps)
-
-            for _ in range(config.update_epochs):
-                np.random.shuffle(b_inds)
-                for start in range(0, rollout_steps, config.minibatch_size):
-                    end = start + config.minibatch_size
-                    mb_inds = b_inds[start:end]
-                    mb_obs = b_obs[mb_inds]
-                    mb_feat = extract_diy_features_torch(mb_obs)
-                    mb_actions = b_actions[mb_inds]
-                    mb_old_logprobs = b_logprobs[mb_inds]
-                    mb_returns = b_returns[mb_inds]
-                    mb_advantages = b_advantages[mb_inds]
-                    mb_diy_actions = b_diy_actions[mb_inds]
-
-                    logits, values = model(mb_obs, mb_feat)
-                    dist = Categorical(logits=logits)
-                    new_logprobs = dist.log_prob(mb_actions)
-                    entropy = dist.entropy().mean()
-
-                    logratio = new_logprobs - mb_old_logprobs
-                    ratio = logratio.exp()
-                    pg_loss1 = -mb_advantages * ratio
-                    pg_loss2 = -mb_advantages * torch.clamp(
-                        ratio, 1.0 - config.clip_coef, 1.0 + config.clip_coef
-                    )
-                    pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-
-                    value_loss = F.mse_loss(values, mb_returns)
-                    imitation_loss = F.cross_entropy(logits, mb_diy_actions)
-                    loss = (
-                        pg_loss
-                        + config.vf_coef * value_loss
-                        - config.ent_coef * entropy
-                        + config.imitation_coef * imitation_loss
-                    )
-
-                    optimizer.zero_grad()
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(
-                        model.parameters(), config.max_grad_norm
-                    )
-                    optimizer.step()
-
-            mean_reward = (
-                float(np.mean(episode_rewards[-10:])) if episode_rewards else 0.0
-            )
-            mean_score = float(np.mean(episode_scores[-10:])) if episode_scores else 0.0
-            print(
-                f"update={update}/{num_updates} global_step={global_step} "
-                f"mean_reward_10={mean_reward:.2f} mean_score_10={mean_score:.2f}"
-            )
-
-            checkpoint_payload = {
-                "model_state_dict": model.state_dict(),
-                "obs_dim": obs_dim,
-                "feature_dim": feature_dim,
-                "action_dim": 2,
-                "algorithm": "ppo_actor_critic_cnn_with_diy_baseline",
-                "config": config.__dict__,
-                "update": update,
-                "global_step": global_step,
-                "mean_reward_10": mean_reward,
-                "mean_score_10": mean_score,
-            }
-            latest_checkpoint_saver.stage(checkpoint_payload)
-
-            is_better = (mean_score > best_mean_score) or (
-                mean_score == best_mean_score and mean_reward > best_mean_reward
-            )
-            if is_better:
-                best_mean_score = mean_score
-                best_mean_reward = mean_reward
-                torch.save(checkpoint_payload, str(best_save_path))
+                mean_score = (
+                    float(np.mean(episode_scores[-10:])) if episode_scores else 0.0
+                )
                 print(
-                    f"best_mean_reward_10={best_mean_reward:.2f} "
-                    f"best_mean_score_10={best_mean_score:.2f}"
+                    f"update={update} global_step={global_step} "
+                    f"mean_reward_10={mean_reward:.2f} mean_score_10={mean_score:.2f}"
                 )
 
-    env.close()
+                checkpoint_payload = {
+                    "model_state_dict": model.state_dict(),
+                    "obs_dim": obs_dim,
+                    "feature_dim": feature_dim,
+                    "action_dim": 2,
+                    "algorithm": "ppo_actor_critic_cnn_with_diy_baseline",
+                    "config": config.__dict__,
+                    "update": update,
+                    "global_step": global_step,
+                    "mean_reward_10": mean_reward,
+                    "mean_score_10": mean_score,
+                }
+                latest_checkpoint_saver.stage(checkpoint_payload)
+
+                is_better = (mean_score > best_mean_score) or (
+                    mean_score == best_mean_score and mean_reward > best_mean_reward
+                )
+                if is_better:
+                    best_mean_score = mean_score
+                    best_mean_reward = mean_reward
+                    torch.save(checkpoint_payload, str(best_save_path))
+                    print(
+                        f"best_mean_reward_10={best_mean_reward:.2f} "
+                        f"best_mean_score_10={best_mean_score:.2f}"
+                    )
+
     print(
         f"training_done latest_model={latest_save_path} " f"best_model={best_save_path}"
     )
