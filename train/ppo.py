@@ -252,7 +252,7 @@ def train(config: PPOConfig) -> None:
                         episode_rewards.append(running_episode_reward)
                         episode_scores.append(int(info.get("score", 0)))
                         running_episode_reward = 0.0
-                        next_obs, _ = env.reset()
+                        next_obs, _ = env.reset(seed=config.seed + len(episode_rewards))
                         next_obs = np.asarray(next_obs, dtype=np.float32)
                         diy_agent.reset()
 
@@ -271,7 +271,7 @@ def train(config: PPOConfig) -> None:
                         next_non_terminal = 1.0 - done_buf[t]
                         next_values = next_value_f
                     else:
-                        next_non_terminal = 1.0 - done_buf[t + 1]
+                        next_non_terminal = 1.0 - done_buf[t]
                         next_values = value_buf[t + 1]
                     delta = (
                         reward_buf[t]
