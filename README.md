@@ -30,6 +30,9 @@ python -m train --total-timesteps 200000
 
 The trainer uses DIY-guided engineered features and reward shaping, and also adds a
 behavior-cloning auxiliary loss from the DIY policy as a baseline signal.
+Training writes two checkpoints to `checkpoints\`:
+`latest.pt` (latest update) and `best.pt` (best `mean_score_10`,
+with `mean_reward_10` as tie-breaker).
 
 For full CLI arguments and descriptions, run:
 
