@@ -5,3 +5,5 @@
 .vscode/
 *.pyc
 *.pth
+
+checkpoints/

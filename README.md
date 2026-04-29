@@ -25,7 +25,7 @@ python -m agent --agent ppo --model-path path\to\model.pt --episodes 3 --render
 ### 3. Train PPO (Actor-Critic + CNN)
 
 ```bash
-python -m train --total-timesteps 200000 --save-path checkpoints\ppo_cnn.pt
+python -m train --total-timesteps 200000
 ```
 
 The trainer uses DIY-guided engineered features and reward shaping, and also adds a

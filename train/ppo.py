@@ -15,6 +15,9 @@ from agent.diy import DIYDecisionAgent
 from train.features import extract_diy_features_torch, shaped_reward_from_features
 from train.model import ActorCriticCNN
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SAVE_PATH = PROJECT_ROOT / "checkpoints" / "ppo_cnn.pt"
+
 
 @dataclass
 class PPOConfig:
@@ -90,12 +93,6 @@ def parse_args() -> PPOConfig:
     parser.add_argument(
         "--device", type=str, default="cpu", help="PyTorch device, e.g. cpu or cuda."
     )
-    parser.add_argument(
-        "--save-path",
-        type=Path,
-        default=Path("checkpoints\\ppo_cnn.pt"),
-        help="Output checkpoint path.",
-    )
     args = parser.parse_args()
     return PPOConfig(
         total_timesteps=args.total_timesteps,
@@ -111,7 +108,7 @@ def parse_args() -> PPOConfig:
         learning_rate=args.learning_rate,
         max_grad_norm=args.max_grad_norm,
         seed=args.seed,
-        save_path=args.save_path,
+        save_path=SAVE_PATH,
         device=args.device,
     )
 
