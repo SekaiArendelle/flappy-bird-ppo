@@ -37,6 +37,7 @@ class PPOConfig:
     learning_rate: float
     max_grad_norm: float
     total_timesteps: int | None
+    target_kl: float | None
     seed: int
     device: str
 
@@ -146,6 +147,12 @@ def parse_args() -> PPOConfig:
         default=5_000_000,
         help="Total environment steps to train. Use 'inf' for unlimited steps.",
     )
+    parser.add_argument(
+        "--target-kl",
+        type=float,
+        default=None,
+        help="Target KL divergence threshold. Stop update epochs early if exceeded.",
+    )
     args = parser.parse_args()
     return PPOConfig(
         rollout_steps=args.rollout_steps,
@@ -164,6 +171,7 @@ def parse_args() -> PPOConfig:
         seed=args.seed,
         device=args.device,
         total_timesteps=args.total_timesteps,
+        target_kl=args.target_kl,
     )
 
 
@@ -332,7 +340,9 @@ def train(config: PPOConfig) -> None:
                 )
                 b_inds = np.arange(rollout_steps)
 
-                for _ in range(config.update_epochs):
+                approx_kl = 0.0
+                early_stop = False
+                for epoch in range(config.update_epochs):
                     np.random.shuffle(b_inds)
                     for start in range(0, rollout_steps, config.minibatch_size):
                         end = start + config.minibatch_size
@@ -353,6 +363,14 @@ def train(config: PPOConfig) -> None:
 
                         logratio = new_logprobs - mb_old_logprobs
                         ratio = logratio.exp()
+
+                        if config.target_kl is not None:
+                            with torch.no_grad():
+                                approx_kl = ((ratio - 1) - logratio).mean()
+                            if approx_kl > config.target_kl:
+                                early_stop = True
+                                break
+
                         pg_loss1 = -mb_advantages * ratio
                         pg_loss2 = -mb_advantages * torch.clamp(
                             ratio, 1.0 - config.clip_coef, 1.0 + config.clip_coef
@@ -375,6 +393,14 @@ def train(config: PPOConfig) -> None:
                             model.parameters(), config.max_grad_norm
                         )
                         optimizer.step()
+
+                    if early_stop:
+                        print(
+                            f"early_stop update={update} epoch={epoch} "
+                            f"reason=kl_divergence approx_kl={approx_kl:.4f} "
+                            f"target_kl={config.target_kl}"
+                        )
+                        break
 
                 mean_reward = (
                     float(np.mean(episode_rewards[-10:])) if episode_rewards else 0.0
