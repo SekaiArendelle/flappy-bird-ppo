@@ -36,6 +36,7 @@ class PPOConfig:
     imitation_stop_score_gap: float
     learning_rate: float
     max_grad_norm: float
+    total_timesteps: int | None
     seed: int
     device: str
 
@@ -56,6 +57,23 @@ class DeferredLatestCheckpointSaver:
         if self._latest_payload is None:
             return
         torch.save(self._latest_payload, str(self._save_path))
+
+
+def parse_total_timesteps(value: str) -> int | None:
+    normalized = value.strip().lower()
+    if normalized == "inf":
+        return None
+    try:
+        steps = int(normalized)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "--total-timesteps must be a positive integer, or 'inf' for unlimited steps."
+        ) from exc
+    if steps <= 0:
+        raise argparse.ArgumentTypeError(
+            "--total-timesteps must be a positive integer, or 'inf' for unlimited steps."
+        )
+    return steps
 
 
 def parse_args() -> PPOConfig:
@@ -122,6 +140,12 @@ def parse_args() -> PPOConfig:
     parser.add_argument(
         "--device", type=str, default="cpu", help="PyTorch device, e.g. cpu or cuda."
     )
+    parser.add_argument(
+        "--total-timesteps",
+        type=parse_total_timesteps,
+        default=5_000_000,
+        help="Total environment steps to train. Use 'inf' for unlimited steps.",
+    )
     args = parser.parse_args()
     return PPOConfig(
         rollout_steps=args.rollout_steps,
@@ -139,6 +163,7 @@ def parse_args() -> PPOConfig:
         max_grad_norm=args.max_grad_norm,
         seed=args.seed,
         device=args.device,
+        total_timesteps=args.total_timesteps,
     )
 
 
@@ -210,6 +235,11 @@ def train(config: PPOConfig) -> None:
         with DeferredLatestCheckpointSaver(latest_save_path) as latest_checkpoint_saver:
             while True:
                 update += 1
+                if config.total_timesteps is not None:
+                    progress = min(1.0, global_step / config.total_timesteps)
+                    lr_now = config.learning_rate * (1.0 - progress)
+                    for param_group in optimizer.param_groups:
+                        param_group["lr"] = lr_now
                 obs_buf = np.zeros((rollout_steps, obs_dim), dtype=np.float32)
                 action_buf = np.zeros((rollout_steps,), dtype=np.int64)
                 logprob_buf = np.zeros((rollout_steps,), dtype=np.float32)
@@ -352,10 +382,11 @@ def train(config: PPOConfig) -> None:
                 mean_score = (
                     float(np.mean(episode_scores[-10:])) if episode_scores else 0.0
                 )
+                current_lr = optimizer.param_groups[0]["lr"]
                 print(
                     f"update={update} global_step={global_step} "
                     f"mean_reward_10={mean_reward:.2f} mean_score_10={mean_score:.2f} "
-                    f"imitation_coef={imitation_coef:.4f}"
+                    f"lr={current_lr:.2e} imitation_coef={imitation_coef:.4f}"
                 )
                 if imitation_active and (
                     mean_score >= diy_baseline_score - config.imitation_stop_score_gap
@@ -395,6 +426,9 @@ def train(config: PPOConfig) -> None:
                         f"best_mean_reward_10={best_mean_reward:.2f} "
                         f"best_mean_score_10={best_mean_score:.2f}"
                     )
+
+                if config.total_timesteps is not None and global_step >= config.total_timesteps:
+                    break
 
     print(
         f"training_done latest_model={latest_save_path} " f"best_model={best_save_path}"
