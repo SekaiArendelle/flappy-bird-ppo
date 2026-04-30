@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from train.features import extract_diy_features_torch
-from train.model import ActorCritic
+from train.model import ActorCriticLSTM
 
 
 class PPOInferenceAgent:
@@ -17,6 +17,7 @@ class PPOInferenceAgent:
         self._device = torch.device(device)
         self._model = self._load_model(model_path).to(self._device)
         self._model.eval()
+        self._hidden_state = None
 
     def _load_model(self, model_path: Path) -> torch.nn.Module:
         if not model_path.exists():
@@ -40,7 +41,7 @@ class PPOInferenceAgent:
                     obs_dim = int(checkpoint.get("obs_dim", 12))
                     feature_dim = int(checkpoint.get("feature_dim", 12))
                     action_dim = int(checkpoint.get("action_dim", 2))
-                    model = ActorCritic(
+                    model = ActorCriticLSTM(
                         obs_dim=obs_dim, feature_dim=feature_dim, action_dim=action_dim
                     )
                     model.load_state_dict(model_state_dict)
@@ -53,17 +54,19 @@ class PPOInferenceAgent:
             )
 
     def reset(self) -> None:
-        return None
+        self._hidden_state = None
 
     def act(self, observation) -> int:
         obs = np.asarray(observation, dtype=np.float32)
         obs_t = torch.from_numpy(obs).unsqueeze(0).to(self._device)
         feat_t = extract_diy_features_torch(obs_t).to(self._device)
         with torch.no_grad():
-            output = self._model(obs_t, feat_t)
+            output = self._model(obs_t, feat_t, self._hidden_state)
 
         if isinstance(output, (tuple, list)):
             logits = output[0]
+            if len(output) >= 3:
+                self._hidden_state = output[2]
         else:
             logits = output
 

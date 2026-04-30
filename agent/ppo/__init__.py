@@ -1,4 +1,4 @@
 from agent.ppo.agent import PPOInferenceAgent
-from train.model import ActorCritic
+from train.model import ActorCriticLSTM
 
-__all__ = ["PPOInferenceAgent", "ActorCritic"]
+__all__ = ["PPOInferenceAgent", "ActorCriticLSTM"]

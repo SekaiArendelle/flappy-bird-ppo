@@ -14,7 +14,7 @@ from torch.distributions import Categorical
 import flappy_bird_gymnasium  # noqa: F401
 from agent.diy import DIYDecisionAgent
 from train.features import extract_diy_features_torch, shaped_reward_from_features
-from train.model import ActorCritic
+from train.model import ActorCriticLSTM
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CHECKPOINT_DIR = PROJECT_ROOT / "checkpoints"
@@ -263,13 +263,16 @@ def train(config: PPOConfig) -> None:
         obs = np.asarray(observation, dtype=np.float32)
         obs_dim = int(obs.shape[1])
         feature_dim = 12
-        model = ActorCritic(
+        model = ActorCriticLSTM(
             obs_dim=obs_dim, feature_dim=feature_dim, action_dim=2
         ).to(device)
+        hidden_size = model.hidden_size
         optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
         diy_agents = [DIYDecisionAgent() for _ in range(config.num_envs)]
         for diy_agent in diy_agents:
             diy_agent.reset()
+        hidden_h = np.zeros((config.num_envs, hidden_size), dtype=np.float32)
+        hidden_c = np.zeros((config.num_envs, hidden_size), dtype=np.float32)
         episode_rewards: list[float] = []
         episode_scores: list[int] = []
         running_episode_rewards = np.zeros((config.num_envs,), dtype=np.float32)
@@ -311,13 +314,29 @@ def train(config: PPOConfig) -> None:
                 diy_action_buf = np.zeros(
                     (rollout_steps_per_env, config.num_envs), dtype=np.int64
                 )
+                hidden_h_buf = np.zeros(
+                    (rollout_steps_per_env, config.num_envs, hidden_size),
+                    dtype=np.float32,
+                )
+                hidden_c_buf = np.zeros(
+                    (rollout_steps_per_env, config.num_envs, hidden_size),
+                    dtype=np.float32,
+                )
 
                 for t in range(rollout_steps_per_env):
                     obs_buf[t] = obs
+                    hidden_h_buf[t] = hidden_h
+                    hidden_c_buf[t] = hidden_c
                     obs_t = torch.from_numpy(obs).to(device)
                     feat_t = extract_diy_features_torch(obs_t).to(device)
+                    h_t = torch.from_numpy(hidden_h).to(device)
+                    c_t = torch.from_numpy(hidden_c).to(device)
                     with torch.no_grad():
-                        logits, value = model(obs_t, feat_t)
+                        logits, value, (new_h, new_c) = model(
+                            obs_t, feat_t, (h_t.unsqueeze(0), c_t.unsqueeze(0))
+                        )
+                        hidden_h = new_h.squeeze(0).cpu().numpy()
+                        hidden_c = new_c.squeeze(0).cpu().numpy()
                         dist = Categorical(logits=logits)
                         action = dist.sample()
                         logprob = dist.log_prob(action)
@@ -363,6 +382,8 @@ def train(config: PPOConfig) -> None:
                             )
                         )
                         running_episode_rewards[env_index] = 0.0
+                        hidden_h[env_index] = 0.0
+                        hidden_c[env_index] = 0.0
                         diy_agents[int(env_index)].reset()
 
                     obs = next_obs
@@ -370,7 +391,7 @@ def train(config: PPOConfig) -> None:
                 with torch.no_grad():
                     next_obs_t = torch.from_numpy(obs).to(device)
                     next_feat_t = extract_diy_features_torch(next_obs_t).to(device)
-                    _, next_value = model(next_obs_t, next_feat_t)
+                    _, next_value, _ = model(next_obs_t, next_feat_t)
                     next_value_np = next_value.cpu().numpy().astype(np.float32)
 
                 advantages = np.zeros(
@@ -411,6 +432,12 @@ def train(config: PPOConfig) -> None:
                 b_advantages = torch.from_numpy(advantages.reshape(batch_size)).to(
                     device
                 )
+                b_hidden_h = torch.from_numpy(
+                    hidden_h_buf.reshape(batch_size, hidden_size)
+                ).to(device)
+                b_hidden_c = torch.from_numpy(
+                    hidden_c_buf.reshape(batch_size, hidden_size)
+                ).to(device)
                 imitation_coef = config.imitation_coef if imitation_active else 0.0
                 if imitation_coef > 0.0:
                     b_diy_actions = torch.from_numpy(
@@ -438,7 +465,13 @@ def train(config: PPOConfig) -> None:
                         if imitation_coef > 0.0:
                             mb_diy_actions = b_diy_actions[mb_inds]
 
-                        logits, values = model(mb_obs, mb_feat)
+                        mb_hidden_h = b_hidden_h[mb_inds]
+                        mb_hidden_c = b_hidden_c[mb_inds]
+                        mb_hidden = (
+                            mb_hidden_h.unsqueeze(0),
+                            mb_hidden_c.unsqueeze(0),
+                        )
+                        logits, values, _ = model(mb_obs, mb_feat, mb_hidden)
                         dist = Categorical(logits=logits)
                         new_logprobs = dist.log_prob(mb_actions)
                         entropy = dist.entropy().mean()

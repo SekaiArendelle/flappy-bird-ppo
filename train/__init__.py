@@ -1,4 +1,4 @@
-from train.model import ActorCritic
+from train.model import ActorCriticLSTM
 from train.ppo import PPOConfig, train
 
-__all__ = ["ActorCritic", "PPOConfig", "train"]
+__all__ = ["ActorCriticLSTM", "PPOConfig", "train"]
