@@ -1,31 +1,33 @@
 # flappy-bird-ppo
 
-This project uses `black` for Python code formatting.
+## Setup
+
+```bash
+uv sync
+```
 
 ## Use the `agent` module
 
-Run from the project root:
-
 ```bash
-python -m agent --help
+uv run python -m agent --help
 ```
 
 ### 1. DIY (rule-based) agent
 
 ```bash
-python -m agent --agent diy --episodes 3 --render
+uv run python -m agent --agent diy --episodes 3 --render
 ```
 
 ### 2. PPO agent
 
 ```bash
-python -m agent --agent ppo --model-path path\to\model.pt --episodes 3 --render
+uv run python -m agent --agent ppo --model-path path/to/model.pt --episodes 3 --render
 ```
 
 ### 3. Train PPO (Actor-Critic + CNN)
 
 ```bash
-python -m train
+uv run python -m train
 ```
 
 The trainer uses DIY-guided engineered features and reward shaping, and also adds a
@@ -35,7 +37,7 @@ Imitation is enabled in early training, and is automatically disabled once
 (`--imitation-stop-score-gap`), after which optimization relies on PPO losses and
 reward shaping only.
 Training runs indefinitely until interrupted by `Ctrl+C`.
-Training writes two checkpoints to `checkpoints\`:
+Training writes two checkpoints to `checkpoints/`:
 `latest.pt` (latest update) and `best.pt` (best `mean_score_10`,
 with `mean_reward_10` as tie-breaker).
 Rollout collection uses multi-process `AsyncVectorEnv` (`--num-envs`, default `4`)
@@ -44,5 +46,11 @@ to speed up data collection; `--rollout-steps` must be divisible by `--num-envs`
 For full trainer CLI arguments and descriptions, run:
 
 ```bash
-python -m train --help
+uv run python -m train --help
+```
+
+## Code formatting
+
+```bash
+uv run black .
 ```

@@ -1,0 +1,10 @@
+[project]
+name = "flappy-bird-ppo"
+version = "0.1.0"
+description = "Flappy Bird PPO agent"
+requires-python = ">=3.12"
+dependencies = [
+    "torch==2.10.0",
+    "flappy-bird-gymnasium==0.4.0",
+]
+
